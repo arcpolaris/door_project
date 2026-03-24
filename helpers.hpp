@@ -7,6 +7,7 @@
 #include <stdexcept>
 #include <utility/wifi_drv.h>
 #include <ArduinoHttpServer.h>
+#include <cstring>
 
 #pragma once
 
@@ -124,6 +125,35 @@ public:
 				params[key].push_back(resource.substring(next_eql + 1, next_and));
 				start = next_and + 1;
 			}
+		}
+	}
+};
+
+class WiFiHelpers {
+public:
+	static void printWiFiStatus() {
+		Serial.print("SSID: ");
+		Serial.println(WiFi.SSID());
+
+		IPAddress ip = WiFi.localIP();
+		Serial.print("Running at http://");
+		Serial.println(ip);
+	}
+
+	static inline void ensureWiFiModule() {
+		if (WiFi.status() == WL_NO_MODULE) {
+			Serial.println("Communication with WiFi module failed!");
+			while (true);
+		}
+	}
+
+	static inline void checkVersion() {
+		const char* fv = WiFi.firmwareVersion();
+		if (std::strcmp(fv, WIFI_FIRMWARE_LATEST_VERSION) < 0) {
+			Serial.print("Please upgrade the firmware from ");
+			Serial.print(fv);
+			Serial.print(" to ");
+			Serial.println(WIFI_FIRMWARE_LATEST_VERSION);
 		}
 	}
 };

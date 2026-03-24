@@ -17,8 +17,8 @@
 
 using HttpMethod = ArduinoHttpServer::Method;
 
-char ssid[] = SECRET_SSID;
-char pass[] = SECRET_PASS;
+const char ssid[] = SECRET_SSID;
+const char pass[] = SECRET_PASS;
 int status = WL_IDLE_STATUS;
 
 enum DoorState : uint8_t {
@@ -37,26 +37,14 @@ uint32_t servo_timestamp;
 void setup() {
 	Serial.begin(9600);
 
-	//pinMode(1, OUTPUT);
 	pinMode(PIN_BUTTON, INPUT_PULLUP);
 	servo.attach(PIN_SERVO);
 	pinMode(LED_BUILTIN, OUTPUT);
 	MultiLED::init();
 
-	Serial.println("Access Point Web Server");
-
-	if (WiFi.status() == WL_NO_MODULE) {
-		Serial.println("Communication with WiFi module failed!");
-		while (true);
-	}
-	String fv = WiFi.firmwareVersion();
-	if (fv < WIFI_FIRMWARE_LATEST_VERSION) {
-		Serial.print("Please upgrade the firmware from ");
-		Serial.print(fv);
-		Serial.print(" to ");
-		Serial.println(WIFI_FIRMWARE_LATEST_VERSION);
-	}
-	//WiFi.config(IPAddress(192, 168, 4, 1));
+	WiFiHelpers::ensureWiFiModule();
+	WiFiHelpers::checkVersion();
+	
 	Serial.print("Joining: ");
 	Serial.println(ssid);
 	status = WiFi.begin(ssid, pass);
@@ -67,7 +55,7 @@ void setup() {
 	delay(1000);
 	Serial.println("Ready for connections");
 	server.begin();
-	printWiFiStatus();
+	WiFiHelpers::printWiFiStatus();
 	servoLock();
 }
 
@@ -75,7 +63,7 @@ inline void servoSetAndRefresh(unsigned long val) {
   servo_timestamp = millis();
   servo.attach(PIN_SERVO);
   servo.writeMicroseconds(val);
-	pwm_width = val;
+  pwm_width = val;
 }
 
 void servoLock() {
@@ -122,29 +110,19 @@ void loop() {
   }
 }
 
-void printWiFiStatus() {
-	Serial.print("SSID: ");
-	Serial.println(WiFi.SSID());
-
-	IPAddress ip = WiFi.localIP();
-	Serial.print("Running at http://");
-	Serial.println(ip);
-}
-
 void handleClient(WiFiClient client) {
 	ArduinoHttpServer::StreamHttpRequest<2048> request(client);
 	bool success = request.readRequest();
 
 	if (!success) {
-		client.println("HTTP/1.1 400 Bad Request");
-		client.println();
+		client.println("HTTP/1.1 400 Bad Request\n");
 		return;
 	}
 
 	//TODO: Guard against bad versioning
 
-	auto method = request.getMethod();
-	auto body = String(request.getBody());
+	auto method    = request.getMethod();
+	auto body      = String(request.getBody());
 	auto& resource = request.getResource().toString();
 
 	auto endpoint = HttpHelpers::getSegments(resource);
@@ -208,11 +186,6 @@ void endpointSwitch(WiFiClient client, HttpMethod method, std::vector<String> en
 	//OPTIMIZE:
 	if (endpoint.size() == 1) {
 		if (endpoint[0].equals("/")) handle_root(client);
-		//else if (endpoint[0].equalsIgnoreCase("/H")) handle_high(client);
-		//else if (endpoint[0].equalsIgnoreCase("/L")) handle_low(client);
-		//else if (endpoint[0].equalsIgnoreCase("/setRGB")) handle_setrgb(client, query);
-		//else if (endpoint[0].equalsIgnoreCase("/setServo")) handle_setservo(client, query);
-		//else if (endpoint[0].equalsIgnoreCase("/getBtn")) handle_getbtn(client);
 		else if (endpoint[0].equalsIgnoreCase("/lock")) handle_lock(client);
 		else if (endpoint[0].equalsIgnoreCase("/unlock")) handle_unlock(client);
 		else flag = false;
@@ -227,128 +200,18 @@ void endpointSwitch(WiFiClient client, HttpMethod method, std::vector<String> en
 #pragma region endpoint_handlers
 void handle_root(WiFiClient client) {
 	client.println("HTTP/1.1 200 OK");
-	client.println("Content-type:text/html");
-	client.println();
-	client.print("TODO: Put something here");
-	client.println();
+  client.println("Content-type:text/html");
+  client.println("TODO: Put something here\n");
 }
 void handle_lock(WiFiClient client) {
 	servoLock();
 	client.println("HTTP/1.1 204 No Content");
-	client.println();
+  client.println("");
 }
 void handle_unlock(WiFiClient client) {
   servoClear();
-	//if (state == DoorState::LOCKED) {
   client.println("HTTP/1.1 202 Accepted");
   client.println();
-	// }
-	// else {
-	// 	client.print("HTTP/1.1 ");
-	// 	client.println((state == DoorState::CLEAR ? "202 Accepted" : "304 Not Modified"));
-	// 	client.println();
-	// }
 }
-void handle_high(WiFiClient client) {
-	client.println("HTTP/1.1 204 No Content");
-	client.println();
-	digitalWrite(LED_BUILTIN, HIGH);
-}
-void handle_low(WiFiClient client) {
-	client.println("HTTP/1.1 204 No Content");
-	client.println();
-	digitalWrite(LED_BUILTIN, LOW);
-}
-void handle_getbtn(WiFiClient client) {
-	client.println("HTTP/1.1 200 OK");
-	client.println();
-	client.println(!digitalRead(0));
-}
-void handle_setrgb(WiFiClient client, std::map<String, std::vector<String>> query) {
-	uint flag_r = 0, flag_g = 0, flag_b = 0;
 
-	flag_r += query.count("r");
-	flag_r += query.count("R");
-	flag_g += query.count("g");
-	flag_g += query.count("G");
-	flag_b += query.count("b");
-	flag_b += query.count("B");
-
-	if (flag_r > 1 || flag_g > 1 || flag_b > 1) {
-		client.println("HTTP/1.1 400 Bad Request");
-		client.println();
-		client.println("Duplicate query parameters are invalid");
-		return;
-	}
-	if (flag_r + flag_g + flag_b <= 0) {
-		client.println("HTTP/1.1 204 No Content");
-		client.println();
-		return;
-	}
-
-	client.println("HTTP/1.1 200 OK");
-	client.println();
-
-	String res_buff = "";
-	if (flag_r) {
-		String val_r;
-		if (query.count("r") > 0) {
-			val_r = query["r"].front();
-		}
-		else val_r = query["R"].front();
-		res_buff += "set red to " + val_r + "\n";
-		MultiLED::setR((uint8_t)val_r.toInt());
-	}
-	if (flag_g) {
-		String val_g;
-		if (query.count("g") > 0) {
-			val_g = query["g"].front();
-		}
-		else val_g = query["G"].front();
-		res_buff += "set green to " + val_g + "\n";
-		MultiLED::setG((uint8_t)val_g.toInt());
-	}
-	if (flag_b) {
-		String val_b;
-		if (query.count("b") > 0) {
-			val_b = query["b"].front();
-		}
-		else val_b = query["B"].front();
-		res_buff += "set blue to " + val_b + "\n";
-		MultiLED::setB((uint8_t)val_b.toInt());
-	}
-
-	client.println(res_buff);
-}
-void handle_setservo(WiFiClient client, std::map<String, std::vector<String>> query) {
-	if (query.count("dir") != 1) {
-		client.println("HTTP/1.1 400 Bad Request");
-		client.println();
-	}
-	auto raw = query["dir"].front();
-	double parsed = raw.toDouble();
-	/*if(parsed == 0){
-	  client.println("HTTP/1.1 400 Bad Request");
-	  client.println();
-	  return;
-	}*/
-	servoSetAndRefresh(lerp(600uL, 1800uL, parsed));
-	client.println("HTTP/1.1 204 No Content");
-	client.println();
-}
 #pragma endregion
-
-void PWM(uint8_t pin, float period, float width) {
-	digitalWrite(pin, HIGH);
-	delayMicroseconds(width * 1000);
-	digitalWrite(pin, LOW);
-	delayMicroseconds((period - width) * 1000);
-}
-void PWM(uint8_t pin, unsigned long period, unsigned long width, unsigned long t) {
-	u_long mt = t % period;
-	digitalWrite(pin, mt > width ? LOW : HIGH);
-}
-int PWM(unsigned long period, unsigned long width, unsigned long t) {
-	u_long mt = t % period;
-	return (int)(mt > width);
-}
